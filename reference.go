@@ -7,6 +7,11 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+// Assert that interfaces are satisfied
+var (
+	_ feat.Feature = (*Reference)(nil)
+)
+
 // ReferenceBuilder is a squirrel select builder whose structure matches that
 // of Reference and that knows how to properly extract references from htsdb.
 var ReferenceBuilder = squirrel.Select("rname").
