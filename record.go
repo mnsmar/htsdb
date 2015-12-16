@@ -75,3 +75,23 @@ type SAM struct {
 
 // Name returns the SAM qname.
 func (e *SAM) Name() string { return e.Qname }
+
+// Head returns the head coordinate of r depending on orientation.
+func Head(r feat.Range, o feat.Orientation) int {
+	if o == feat.Forward {
+		return r.Start()
+	} else if o == feat.Reverse {
+		return r.End() - 1
+	}
+	panic("htsdb: strand is not 1 or -1")
+}
+
+// Tail returns the tail coordinate of r depending on orientation.
+func Tail(r feat.Range, o feat.Orientation) int {
+	if o == feat.Forward {
+		return r.End() - 1
+	} else if o == feat.Reverse {
+		return r.Start()
+	}
+	panic("htsdb: strand is not 1 or -1")
+}
