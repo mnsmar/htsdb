@@ -7,8 +7,9 @@ import (
 
 // Assert that interfaces are satisfied
 var (
-	_ feat.Orienter = (*Feature)(nil)
+	_ feat.Range    = (*Range)(nil)
 	_ feat.Feature  = (*Feature)(nil)
+	_ feat.Orienter = (*OrientedFeature)(nil)
 )
 
 // RangeBuilder is a squirrel select builder whose columns match Range fields.
@@ -33,21 +34,19 @@ func (e *Range) Len() int { return e.End() - e.Start() }
 // CopyNum returns the copy number of Range.
 func (e *Range) CopyNum() int { return e.CopyNumber }
 
-// Feature is part of an htsdb record that wraps Range, strand and the name of
-// the reference sequence.
+// FeatureBuilder is a squirrel select builder whose columns match Feature
+// fields.
+var FeatureBuilder = RangeBuilder.Column("rname")
+
+// Feature is part of an htsdb record that wraps Range and the name of the
+// reference.
 type Feature struct {
-	Strand int    `db:"strand"`
-	Rname  string `db:"rname"`
+	Rname string `db:"rname"`
 	Range
 }
 
 // Name returns an empty string.
 func (e *Feature) Name() string { return "" }
-
-// Orientation returns the orientation of Feature.
-func (e *Feature) Orientation() feat.Orientation {
-	return feat.Orientation(e.Strand)
-}
 
 // Description returns an empty string.
 func (e *Feature) Description() string { return "" }
@@ -57,9 +56,25 @@ func (e *Feature) Location() feat.Feature {
 	return &Reference{Chrom: e.Rname}
 }
 
+// OrientedFeatureBuilder is a squirrel select builder whose columns match
+// OrientedFeature fields.
+var OrientedFeatureBuilder = FeatureBuilder.Column("strand")
+
+// OrientedFeature is part of an htsdb record that wraps Feature and has
+// orientation.
+type OrientedFeature struct {
+	Orient feat.Orientation `db:"strand"`
+	Feature
+}
+
+// Orientation returns the orientation of OrientedFeature.
+func (e *OrientedFeature) Orientation() feat.Orientation {
+	return e.Orient
+}
+
 // SAM corresponds to database record that has all the fields of a SAM record.
 type SAM struct {
-	Feature
+	OrientedFeature
 	Qname string
 	Flag  uint
 	Pos   uint
@@ -83,7 +98,7 @@ func Head(r feat.Range, o feat.Orientation) int {
 	} else if o == feat.Reverse {
 		return r.End() - 1
 	}
-	panic("htsdb: strand is not 1 or -1")
+	panic("htsdb: orientation must be forward or reverse")
 }
 
 // Tail returns the tail coordinate of r depending on orientation.
@@ -93,5 +108,5 @@ func Tail(r feat.Range, o feat.Orientation) int {
 	} else if o == feat.Reverse {
 		return r.Start()
 	}
-	panic("htsdb: strand is not 1 or -1")
+	panic("htsdb: orientation must be forward or reverse")
 }
