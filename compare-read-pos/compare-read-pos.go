@@ -8,6 +8,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/biogo/biogo/feat"
 	"github.com/jmoiron/sqlx"
 	"github.com/mnsmar/htsdb"
 	"gopkg.in/alecthomas/kingpin.v2"
@@ -93,42 +94,41 @@ func main() {
 	refs, err := htsdb.SelectReferences(db1, refsBuilder1)
 
 	// get position extracting function
-	getPos := head
+	getPos := htsdb.Head
 	if *from == "tail" {
-		getPos = tail
+		getPos = htsdb.Tail
 	}
 
 	// count occupied positions.
 	counts := make(chan (*count))
 	var wg sync.WaitGroup
 	for _, ref := range refs {
-		for _, strand := range []int{-1, 1} {
+		for _, ori := range []feat.Orientation{feat.Forward, feat.Reverse} {
 			wg.Add(1)
-			go func(strand int, chrom string) {
-				defer wg.Done()
-				cnt := &count{}
-				var r htsdb.Range
+			go func(ori feat.Orientation, ref htsdb.Reference) {
 				if *verbose == true {
-					log.Printf("strand:%d, chromosome:%s\n", strand, chrom)
+					log.Printf("strand:%d, chromosome:%s\n", ori, ref.Chrom)
 				}
+				defer wg.Done()
+				r := &htsdb.Range{}
 
 				occupied := make(map[int]bool)
-
-				rows2, err := readsStmt2.Queryx(strand, chrom)
+				rows2, err := readsStmt2.Queryx(ori, ref.Chrom)
 				panicOnError(err)
 				for rows2.Next() {
-					err = rows2.StructScan(&r)
+					err = rows2.StructScan(r)
 					panicOnError(err)
-					pos := getPos(&r, strand)
+					pos := getPos(r, ori)
 					occupied[pos] = true
 				}
 
-				rows1, err := readsStmt1.Queryx(strand, chrom)
+				cnt := &count{}
+				rows1, err := readsStmt1.Queryx(ori, ref.Chrom)
 				panicOnError(err)
 				for rows1.Next() {
-					err = rows1.StructScan(&r)
+					err = rows1.StructScan(r)
 					panicOnError(err)
-					pos := getPos(&r, strand)
+					pos := getPos(r, ori)
 					if occupied[pos] {
 						cnt.posOccupied++
 						cnt.readsOccupied += r.CopyNumber
@@ -137,7 +137,7 @@ func main() {
 					cnt.readsTotal += r.CopyNumber
 				}
 				counts <- cnt
-			}(strand, ref.Chrom)
+			}(ori, ref)
 		}
 	}
 
@@ -158,24 +158,6 @@ func main() {
 		"total_reads:%d\noccupied_reads:%d\npercent_reads:%.2f\n",
 		aggr.posTotal, aggr.posOccupied, aggr.percentPosOccupied(),
 		aggr.readsTotal, aggr.readsOccupied, aggr.percentReadsOccupied())
-}
-
-func head(r *htsdb.Range, strand int) int {
-	if strand == 1 {
-		return r.StartPos
-	} else if strand == -1 {
-		return r.StopPos
-	}
-	panic("hist-around-reference: strand is not 1 or -1")
-}
-
-func tail(r *htsdb.Range, strand int) int {
-	if strand == 1 {
-		return r.StopPos
-	} else if strand == -1 {
-		return r.StartPos
-	}
-	panic("hist-around-reference: strand is not 1 or -1")
 }
 
 func panicOnError(err error) {
