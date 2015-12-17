@@ -28,8 +28,9 @@ var (
 	dbFile2 = app.Flag("db2", "SQLite database file.").PlaceHolder("<file>").Required().String()
 	tab2    = app.Flag("table2", "Database table with aligned reads.").Default("sample").String()
 	where2  = app.Flag("where2", "SQL query to be part of the WHERE clause.").PlaceHolder("<SQL>").String()
-	from    = app.Flag("pos", "Read position on which to measure occupancy.").Required().PlaceHolder("<head|tail>").Enum("head", "tail")
-	span    = app.Flag("span", "Region width to measure, around reference ends.").Default("100").PlaceHolder("<int>").Int()
+	from    = app.Flag("pos", "Read position to measure.").Required().PlaceHolder("<head|tail>").Enum("head", "tail")
+	anti    = app.Flag("anti", "Consider anti-sense reads instead of sense.").Bool()
+	span    = app.Flag("span", "Region to measure, around reference ends.").Default("100").PlaceHolder("<int>").Int()
 	verbose = app.Flag("verbose", "Verbose mode.").Short('v').Bool()
 )
 
@@ -89,18 +90,22 @@ func main() {
 			wg.Add(1)
 			go func(ori feat.Orientation, ref htsdb.Reference) {
 				if *verbose == true {
-					log.Printf("orient:%d, chrom:%s\n", ori, ref.Chrom)
+					log.Printf("orient:%s, chrom:%s\n", ori, ref.Chrom)
 				}
 				defer wg.Done()
 				var r htsdb.Range
 
 				wig := make(map[int]uint)
-				rows1, err := readsStmt1.Queryx(ori, ref.Chrom)
+				ori1 := ori
+				if *anti == true {
+					ori1 = -1 * ori1
+				}
+				rows1, err := readsStmt1.Queryx(ori1, ref.Chrom)
 				panicOnError(err)
 				for rows1.Next() {
 					err = rows1.StructScan(&r)
 					panicOnError(err)
-					pos := getPos(&r, ori)
+					pos := getPos(&r, ori1)
 					wig[pos]++
 				}
 
