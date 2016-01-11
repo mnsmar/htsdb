@@ -143,7 +143,7 @@ func main() {
 	}
 
 	// print results.
-	fmt.Printf("bin\tcount\n")
+	fmt.Printf("pos\tcount\n")
 	for i := -*span; i <= *span; i++ {
 		fmt.Printf("%d\t%d\n", i, aggrHist[i])
 	}
