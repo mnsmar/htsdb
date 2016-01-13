@@ -14,7 +14,7 @@ import (
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
-const prog = "htsdb-relative-pos-dist"
+const prog = "htsdb-relative-pos-distro"
 const version = "0.2"
 const descr = `Measure relative position distribution for reads in database 1
 against reads in database 2. For each possible relative position, print the
