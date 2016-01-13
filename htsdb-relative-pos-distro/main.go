@@ -14,23 +14,37 @@ import (
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
-const prog = "compare-read-relative-pos"
-const version = "0.1"
-const descr = `Measure head/tail read positions around reference head/tail
-positions. Output is a delimited file with the number of reads that end at
-each position around the reference ends..`
+const prog = "htsdb-relative-pos-dist"
+const version = "0.2"
+const descr = `Measure relative position distribution for reads in database 1
+against reads in database 2. For each possible relative position, print the
+number of read pairs with this relative positioning, the total number of
+possible pairs and the total number of reads in each database. Read relative
+position is measured either 5'-5' or 3'-3'. Positive numbers indicate read 1
+is downstream of read 2. Provided SQL
+filters will apply to all counts.`
 
 var (
-	app     = kingpin.New(prog, descr)
-	dbFile1 = app.Flag("db1", "SQLite database file.").PlaceHolder("<file>").Required().String()
-	tab1    = app.Flag("table1", "Database table with aligned reads.").Default("sample").String()
-	where1  = app.Flag("where1", "SQL query to be part of the WHERE clause.").PlaceHolder("<SQL>").String()
-	dbFile2 = app.Flag("db2", "SQLite database file.").PlaceHolder("<file>").Required().String()
-	tab2    = app.Flag("table2", "Database table with aligned reads.").Default("sample").String()
-	where2  = app.Flag("where2", "SQL query to be part of the WHERE clause.").PlaceHolder("<SQL>").String()
-	from    = app.Flag("pos", "Read position to measure.").Required().PlaceHolder("<head|tail>").Enum("head", "tail")
-	anti    = app.Flag("anti", "Consider anti-sense reads instead of sense.").Bool()
-	span    = app.Flag("span", "Region to measure, around reference ends.").Default("100").PlaceHolder("<int>").Int()
+	app = kingpin.New(prog, descr)
+
+	dbFile1 = app.Flag("db1", "SQLite file for database 1.").
+		PlaceHolder("<file>").Required().String()
+	tab1 = app.Flag("table1", "Database table name for db1.").
+		Default("sample").String()
+	where1 = app.Flag("where1", "SQL filter injected in WHERE clause for db1.").
+		PlaceHolder("<SQL>").String()
+	dbFile2 = app.Flag("db2", "SQLite file for database 2.").
+		PlaceHolder("<file>").Required().String()
+	tab2 = app.Flag("table2", "Database table name for db2.").
+		Default("sample").String()
+	where2 = app.Flag("where2", "SQL filter injected in WHERE clause for db2.").
+		PlaceHolder("<SQL>").String()
+	from = app.Flag("pos", "Reference point for relative position measurement.").
+		Required().PlaceHolder("<5p|3p>").Enum("5p", "3p")
+	anti = app.Flag("anti", "Compare reads on opposite instead of same orientation.").
+		Bool()
+	span = app.Flag("span", "Maximum distance between compared reads.").
+		Default("100").PlaceHolder("<int>").Int()
 	verbose = app.Flag("verbose", "Verbose mode.").Short('v').Bool()
 )
 
@@ -44,14 +58,18 @@ func main() {
 
 	// assemble sqlx select builders
 	readsBuilder1 := htsdb.RangeBuilder.From(*tab1)
+	countBuilder1 := htsdb.CountBuilder.From(*tab1)
 	if *where1 != "" {
 		readsBuilder1 = readsBuilder1.Where(*where1)
+		countBuilder1 = countBuilder1.Where(*where1)
 	}
 	readsBuilder2 := htsdb.RangeBuilder.From(*tab2)
 	refsBuilder2 := htsdb.ReferenceBuilder.From(*tab2)
+	countBuilder2 := htsdb.CountBuilder.From(*tab2)
 	if *where2 != "" {
 		readsBuilder2 = readsBuilder2.Where(*where2)
 		refsBuilder2 = refsBuilder2.Where(*where2)
+		countBuilder2 = countBuilder2.Where(*where2)
 	}
 
 	// open database connections.
@@ -76,9 +94,23 @@ func main() {
 	// select reference features
 	refs, err := htsdb.SelectReferences(db2, refsBuilder2)
 
+	// count records
+	countQuery1, _, err := countBuilder1.ToSql()
+	panicOnError(err)
+	var totalCount1 int
+	if err = db1.Get(&totalCount1, countQuery1); err != nil {
+		panic(err)
+	}
+	countQuery2, _, err := countBuilder2.ToSql()
+	panicOnError(err)
+	var totalCount2 int
+	if err = db2.Get(&totalCount2, countQuery2); err != nil {
+		panic(err)
+	}
+
 	// get position extracting function
 	getPos := htsdb.Head
-	if *from == "tail" {
+	if *from == "3p" {
 		getPos = htsdb.Tail
 	}
 
@@ -143,9 +175,9 @@ func main() {
 	}
 
 	// print results.
-	fmt.Printf("pos\tcount\n")
+	fmt.Printf("pos\tpairs\treadCount1\treadCount2\n")
 	for i := -*span; i <= *span; i++ {
-		fmt.Printf("%d\t%d\n", i, aggrHist[i])
+		fmt.Printf("%d\t%d\t%d\t%d\n", i, aggrHist[i], totalCount1, totalCount2)
 	}
 }
 
