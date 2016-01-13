@@ -12,6 +12,10 @@ var (
 	_ feat.Orienter = (*OrientedFeature)(nil)
 )
 
+// CountBuilder is a squirrel select builder to count entries.
+var CountBuilder = squirrel.Select().
+	Column(squirrel.Alias(squirrel.Expr("COUNT(*)"), "count"))
+
 // RangeBuilder is a squirrel select builder whose columns match Range fields.
 var RangeBuilder = squirrel.Select("start", "stop", "copy_number")
 
