@@ -4,39 +4,48 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Masterminds/squirrel"
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/Masterminds/squirrel"
 	"github.com/jmoiron/sqlx"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
-// CountBuilder is a squirrel select builder whose columns match Count fields.
-var CountBuilder = squirrel.Select().
-	Column(squirrel.Alias(squirrel.Expr("COUNT(*)"), "total")).
-	Column(squirrel.Alias(squirrel.Expr("SUM(copy_number)"), "copyNum"))
-
-// Reference is a reference feature on which reads align.
 type Count struct {
-	Total   int `db:"total"`
-	CopyNum int `db:"copyNum"`
+	Chrom   string `db:"rname"`
+	Length  int    `db:"length"`
+	Strand  int    `db:"strand"`
+	Count   int    `db:"count"`
+	CopyNum int    `db:"copyNum"`
 }
 
+// CountBuilder is a squirrel select builder whose columns match Count fields.
+var CountBuilder = squirrel.Select("rname", "strand").
+	Column(squirrel.Alias(squirrel.Expr("COUNT(*)"), "count")).
+	Column(squirrel.Alias(squirrel.Expr("SUM(copy_number)"), "copyNum")).
+	GroupBy("rname", "strand")
+
 const prog = "htsdb-count-reads"
-const version = "0.1"
-const descr = `Count number of reads. Output is a delimited file with the
-number of reads and the corresponding total copy number.`
+const version = "0.2"
+const descr = `Print the number of reads and read copies stored in the
+database grouped by reference and orientation. Provided SQL filter will apply
+to all counts.`
 
 var (
-	app    = kingpin.New(prog, descr)
-	dbFile = app.Flag("db", "SQLite database file.").PlaceHolder("<file>").Required().String()
-	tab    = app.Flag("table", "Name of table with aligned reads.").Default("sample").String()
-	where  = app.Flag("where", "SQL query to be part of the WHERE clause.").PlaceHolder("<SQL>").String()
-	as     = app.Flag("as", "Name for output count.").Default("all").String()
-	header = app.Flag("header", "Write header line to output.").Bool()
+	app = kingpin.New(prog, descr)
+
+	dbFile = app.Flag("db", "SQLite file for database.").
+		PlaceHolder("<file>").Required().String()
+	tab = app.Flag("table", "Database table name for db.").
+		Default("sample").String()
+	where = app.Flag("where", "SQL filter injected in WHERE clause for db.").
+		PlaceHolder("<SQL>").String()
+	sum = app.Flag("total", "Print a grand total.").
+		Bool()
 )
 
 func main() {
+	// read command line args and options
 	app.HelpFlag.Short('h')
 	app.Version(version)
 	_, err := app.Parse(os.Args[1:])
@@ -63,14 +72,20 @@ func main() {
 	}
 
 	// get the count
-	var count Count
-	if err = db.Get(&count, query); err != nil {
+	var counts []Count
+	if err = db.Select(&counts, query); err != nil {
 		panic(err)
 	}
 
 	// print results.
-	if *header == true {
-		fmt.Printf("category\tcount\tcopy_number\n")
+	var total, totalCN int
+	fmt.Printf("ref\tori\tcount\tcopyNumber\n")
+	for _, c := range counts {
+		total += c.Count
+		totalCN += c.CopyNum
+		fmt.Printf("%s\t%d\t%d\t%d\n", c.Chrom, c.Strand, c.Count, c.CopyNum)
 	}
-	fmt.Printf("%s\t%d\t%d\n", *as, count.Total, count.CopyNum)
+	if *sum == true {
+		fmt.Printf("total\tNA\t%d\t%d\n", total, totalCN)
+	}
 }
