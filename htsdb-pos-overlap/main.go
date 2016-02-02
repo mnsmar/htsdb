@@ -14,11 +14,10 @@ import (
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
-const prog = "compare-read-positions"
-const version = "0.1"
-const descr = `Measure the head/tail read positions that are occupied by
-reference head/tail positions and the reads on these positions. A head/tail
-position is occupied when an equal reference head/tail position exists.`
+const prog = "htsdb-pos-overlap"
+const version = "0.2"
+const descr = `Measure the 5'/3' read positions and the number of reads on
+these positions that are occupied by a 5'/3' position of a reference.`
 
 type count struct {
 	posTotal, posOccupied, readsTotal, readsOccupied int
@@ -41,13 +40,20 @@ func (c *count) percentReadsOccupied() float64 {
 
 var (
 	app     = kingpin.New(prog, descr)
-	dbFile1 = app.Flag("db1", "SQLite database file.").PlaceHolder("<file>").Required().String()
-	tab1    = app.Flag("table1", "Database table with aligned reads.").Default("sample").String()
-	where1  = app.Flag("where1", "SQL query to be part of the WHERE clause.").PlaceHolder("<SQL>").String()
-	dbFile2 = app.Flag("db2", "SQLite database file.").PlaceHolder("<file>").Required().String()
-	tab2    = app.Flag("table2", "Database table with aligned reads.").Default("sample").String()
-	where2  = app.Flag("where2", "SQL query to be part of the WHERE clause.").PlaceHolder("<SQL>").String()
-	from    = app.Flag("pos", "Read position on which to measure occupancy.").Required().PlaceHolder("<head|tail>").Enum("head", "tail")
+	dbFile1 = app.Flag("db1", "SQLite file for database 1.").
+		PlaceHolder("<file>").Required().String()
+	tab1 = app.Flag("table1", "Database table name for db1.").
+		Default("sample").String()
+	where1 = app.Flag("where1", "SQL filter injected in WHERE clause for db1.").
+		PlaceHolder("<SQL>").String()
+	dbFile2 = app.Flag("db2", "SQLite file for database 2.").
+		PlaceHolder("<file>").Required().String()
+	tab2 = app.Flag("table2", "Database table name for db2.").
+		Default("sample").String()
+	where2 = app.Flag("where2", "SQL filter injected in WHERE clause for db2.").
+		PlaceHolder("<SQL>").String()
+	from = app.Flag("pos", "Reference point for relative position measurement.").
+		Required().PlaceHolder("<5p|3p>").Enum("5p", "3p")
 	verbose = app.Flag("verbose", "Verbose mode.").Short('v').Bool()
 )
 
@@ -95,7 +101,7 @@ func main() {
 
 	// get position extracting function
 	getPos := htsdb.Head
-	if *from == "tail" {
+	if *from == "3p" {
 		getPos = htsdb.Tail
 	}
 
