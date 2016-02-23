@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sync"
 
+	"github.com/Masterminds/squirrel"
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/biogo/biogo/feat"
@@ -15,7 +15,7 @@ import (
 )
 
 const prog = "htsdb-relative-pos-distro"
-const version = "0.2"
+const version = "0.3"
 const descr = `Measure relative position distribution for reads in database 1
 against reads in database 2. For each possible relative position, print the
 number of read pairs with this relative positioning, the total number of
@@ -23,6 +23,7 @@ possible pairs and the total number of reads in each database. Read relative
 position is measured either 5'-5' or 3'-3'. Positive numbers indicate read 1
 is downstream of read 2. Provided SQL
 filters will apply to all counts.`
+const maxConc = 512
 
 var (
 	app = kingpin.New(prog, descr)
@@ -48,6 +49,69 @@ var (
 	verbose = app.Flag("verbose", "Verbose mode.").Short('v').Bool()
 )
 
+type job struct {
+	verbose    bool
+	ref        htsdb.Reference
+	ori        feat.Orientation
+	readsStmt1 *sqlx.Stmt
+	readsStmt2 *sqlx.Stmt
+	span       int
+	getPos     func(feat.Range, feat.Orientation) int
+}
+
+type result struct {
+	hist map[int]uint
+	ref  htsdb.Reference
+	ori  feat.Orientation
+}
+
+func worker(id int, jobs <-chan job, results chan<- result) {
+	for j := range jobs {
+		if j.verbose == true {
+			log.Printf("wID:%d, orient:%s, chrom:%s\n", id, j.ori, j.ref.Chrom)
+		}
+		var r htsdb.Range
+
+		wig := make(map[int]uint)
+		ori1 := j.ori
+		if *anti == true {
+			ori1 = -1 * ori1
+		}
+		rows1, err := j.readsStmt1.Queryx(ori1, j.ref.Chrom)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for rows1.Next() {
+			err = rows1.StructScan(&r)
+			if err != nil {
+				log.Fatal(err)
+			}
+			pos := j.getPos(&r, ori1)
+			wig[pos]++
+		}
+
+		hist := make(map[int]uint)
+		rows2, err := j.readsStmt2.Queryx(j.ori, j.ref.Chrom)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for rows2.Next() {
+			err = rows2.StructScan(&r)
+			if err != nil {
+				log.Fatal(err)
+			}
+			pos := j.getPos(&r, j.ori)
+			for relPos := -j.span; relPos <= j.span; relPos++ {
+				if pos+relPos < 0 {
+					continue
+				}
+				hist[relPos*int(j.ori)] += wig[pos+relPos]
+			}
+		}
+		results <- result{hist: hist}
+	}
+}
+
 func main() {
 	app.HelpFlag.Short('h')
 	app.Version(version)
@@ -56,56 +120,34 @@ func main() {
 		kingpin.Fatalf("%s", err)
 	}
 
-	// assemble sqlx select builders
-	readsBuilder1 := htsdb.RangeBuilder.From(*tab1)
-	countBuilder1 := htsdb.CountBuilder.From(*tab1)
-	if *where1 != "" {
-		readsBuilder1 = readsBuilder1.Where(*where1)
-		countBuilder1 = countBuilder1.Where(*where1)
-	}
-	readsBuilder2 := htsdb.RangeBuilder.From(*tab2)
-	refsBuilder2 := htsdb.ReferenceBuilder.From(*tab2)
-	countBuilder2 := htsdb.CountBuilder.From(*tab2)
-	if *where2 != "" {
-		readsBuilder2 = readsBuilder2.Where(*where2)
-		refsBuilder2 = refsBuilder2.Where(*where2)
-		countBuilder2 = countBuilder2.Where(*where2)
-	}
-
 	// open database connections.
-	var db1, db2 *sqlx.DB
-	if db1, err = sqlx.Connect("sqlite3", *dbFile1); err != nil {
-		panic(err)
-	}
-	if db2, err = sqlx.Connect("sqlite3", *dbFile2); err != nil {
-		panic(err)
-	}
+	db1 := connectDB(*dbFile1)
+	db2 := connectDB(*dbFile2)
+
+	// assemble sqlx select builders
+	readsB1, _, countB1 := newBuilders(*tab1, *where1)
+	readsB2, refsB2, countB2 := newBuilders(*tab2, *where2)
 
 	// prepare statements.
-	query1, _, err := readsBuilder1.Where("strand = ? AND rname = ?").ToSql()
-	panicOnError(err)
-	readsStmt1, err := db1.Preparex(query1)
-	panicOnError(err)
-	query2, _, err := readsBuilder2.Where("strand = ? AND rname = ?").ToSql()
-	panicOnError(err)
-	readsStmt2, err := db2.Preparex(query2)
-	panicOnError(err)
+	readsStmt1, err := prepareStmt(readsB1.Where("strand = ? AND rname = ?"), db1)
+	if err != nil {
+		log.Fatal(err)
+	}
+	readsStmt2, err := prepareStmt(readsB2.Where("strand = ? AND rname = ?"), db2)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// select reference features
-	refs, err := htsdb.SelectReferences(db2, refsBuilder2)
+	refs, err := htsdb.SelectReferences(db2, refsB2)
 
 	// count records
-	countQuery1, _, err := countBuilder1.ToSql()
-	panicOnError(err)
-	var totalCount1 int
-	if err = db1.Get(&totalCount1, countQuery1); err != nil {
-		panic(err)
+	var totalCount1, totalCount2 int
+	if totalCount1, err = countRecords(countB1, db1); err != nil {
+		log.Fatal(err)
 	}
-	countQuery2, _, err := countBuilder2.ToSql()
-	panicOnError(err)
-	var totalCount2 int
-	if err = db2.Get(&totalCount2, countQuery2); err != nil {
-		panic(err)
+	if totalCount2, err = countRecords(countB2, db2); err != nil {
+		log.Fatal(err)
 	}
 
 	// get position extracting function
@@ -114,61 +156,35 @@ func main() {
 		getPos = htsdb.Tail
 	}
 
-	// count histogram around reference.
-	hists := make(chan map[int]uint)
-	var wg sync.WaitGroup
-	for _, ref := range refs {
-		for _, ori := range []feat.Orientation{feat.Forward, feat.Reverse} {
-			wg.Add(1)
-			go func(ori feat.Orientation, ref htsdb.Reference) {
-				if *verbose == true {
-					log.Printf("orient:%s, chrom:%s\n", ori, ref.Chrom)
-				}
-				defer wg.Done()
-				var r htsdb.Range
+	jobs := make(chan job, 100000)
+	results := make(chan result, 100)
 
-				wig := make(map[int]uint)
-				ori1 := ori
-				if *anti == true {
-					ori1 = -1 * ori1
-				}
-				rows1, err := readsStmt1.Queryx(ori1, ref.Chrom)
-				panicOnError(err)
-				for rows1.Next() {
-					err = rows1.StructScan(&r)
-					panicOnError(err)
-					pos := getPos(&r, ori1)
-					wig[pos]++
-				}
-
-				hist := make(map[int]uint)
-				rows2, err := readsStmt2.Queryx(ori, ref.Chrom)
-				panicOnError(err)
-				for rows2.Next() {
-					err = rows2.StructScan(&r)
-					panicOnError(err)
-					pos := getPos(&r, ori)
-					for relPos := -*span; relPos <= *span; relPos++ {
-						if pos+relPos < 0 {
-							continue
-						}
-						hist[relPos*int(ori)] += wig[pos+relPos]
-					}
-				}
-				hists <- hist
-			}(ori, ref)
-		}
+	for w := 1; w <= maxConc; w++ {
+		go worker(w, jobs, results)
 	}
 
-	go func() {
-		wg.Wait()
-		close(hists)
-
-	}()
+	jobCnt := 0
+	for _, ref := range refs {
+		for _, ori := range []feat.Orientation{feat.Forward, feat.Reverse} {
+			jobCnt++
+			jobs <- job{
+				verbose:    *verbose,
+				ref:        ref,
+				ori:        ori,
+				readsStmt1: readsStmt1,
+				readsStmt2: readsStmt2,
+				span:       *span,
+				getPos:     getPos,
+			}
+		}
+	}
+	close(jobs)
 
 	// aggregate histograms from goroutines
 	aggrHist := make(map[int]uint)
-	for hist := range hists {
+	for a := 0; a < jobCnt; a++ {
+		res := <-results
+		hist := res.hist
 		for k, v := range hist {
 			aggrHist[k] += v
 		}
@@ -181,8 +197,48 @@ func main() {
 	}
 }
 
-func panicOnError(err error) {
-	if err != nil {
-		panic(err)
+func newBuilders(tab, where string) (
+	readsB, refsB, countB squirrel.SelectBuilder) {
+
+	readsB = htsdb.RangeBuilder.From(tab)
+	refsB = htsdb.ReferenceBuilder.From(tab)
+	countB = htsdb.CountBuilder.From(tab)
+	if where != "" {
+		readsB = readsB.Where(where)
+		refsB = refsB.Where(where)
+		countB = countB.Where(where)
 	}
+	return readsB, refsB, countB
+}
+
+func prepareStmt(b squirrel.SelectBuilder, db *sqlx.DB) (*sqlx.Stmt, error) {
+	q, _, err := b.ToSql()
+	if err != nil {
+		return nil, err
+	}
+	stmt, err := db.Preparex(q)
+	if err != nil {
+		return nil, err
+	}
+	return stmt, nil
+}
+
+func countRecords(b squirrel.SelectBuilder, db *sqlx.DB) (int, error) {
+	var count int
+
+	q, _, err := b.ToSql()
+	if err != nil {
+		return count, err
+	}
+	err = db.Get(&count, q)
+
+	return count, err
+}
+
+func connectDB(file string) *sqlx.DB {
+	db, err := sqlx.Connect("sqlite3", file)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return db
 }
