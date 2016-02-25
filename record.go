@@ -76,24 +76,29 @@ func (e *OrientedFeature) Orientation() feat.Orientation {
 	return e.Orient
 }
 
-// SAM corresponds to database record that has all the fields of a SAM record.
-type SAM struct {
-	OrientedFeature
+// SamRecordBuilder is a squirrel select builder whose columns match SamRecord
+// fields.
+var SamRecordBuilder = squirrel.Select("qname", "flag", "rname", "pos",
+	"mapq", "cigar", "rnext", "pnext", "tlen", "seq", "qual", "tags")
+
+// SamRecord is part of an htsdb record that wraps the fields of a SAM file.
+type SamRecord struct {
 	Qname string
-	Flag  uint
-	Pos   uint
-	Mapq  uint
+	Flag  int
+	Rname string
+	Pos   int
+	Mapq  int
 	Cigar string
 	Rnext string
-	Pnext uint
-	Tlen  uint
+	Pnext int
+	Tlen  int
 	Seq   string
 	Qual  string
 	Tags  string
 }
 
 // Name returns the SAM qname.
-func (e *SAM) Name() string { return e.Qname }
+func (s *SamRecord) Name() string { return s.Qname }
 
 // Head returns the head coordinate of r depending on orientation.
 func Head(r feat.Range, o feat.Orientation) int {
