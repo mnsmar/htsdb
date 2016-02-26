@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -12,9 +13,11 @@ import (
 )
 
 // CountBuilder is a squirrel select builder whose columns match Count fields.
-var CountBuilder = squirrel.Select("rname", "strand").
+var CountBuilder = squirrel.Select().
+	Column(squirrel.Alias(squirrel.Expr("CASE WHEN rname IS NULL THEN \"\" ELSE rname END"), "rname")).
+	Column(squirrel.Alias(squirrel.Expr("CASE WHEN strand IS NULL THEN 0 ELSE strand END"), "strand")).
 	Column(squirrel.Alias(squirrel.Expr("COUNT(*)"), "count")).
-	Column(squirrel.Alias(squirrel.Expr("SUM(copy_number)"), "copyNum"))
+	Column(squirrel.Alias(squirrel.Expr("TOTAL(copy_number)"), "copyNum"))
 
 // Count is a databases row with record count information.
 type Count struct {
@@ -73,19 +76,19 @@ func main() {
 	// open database connections.
 	var db *sqlx.DB
 	if db, err = sqlx.Connect("sqlite3", *dbFile); err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	// prepare statements.
 	query, _, err := countBuilder.ToSql()
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	// get the count
 	var counts []Count
 	if err = db.Select(&counts, query); err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	// print results.
