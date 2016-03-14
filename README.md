@@ -6,3 +6,6 @@ and perform custom queries. For usage examples see available tools.
 
 Note: The API is in early alpha and therefore very unstable. Things change
 frequently.
+
+To install
+`go get github.com/mnsmar/htsdb/...`
