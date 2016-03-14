@@ -16,12 +16,12 @@ import (
 
 const prog = "htsdb-relative-pos-distro"
 const version = "0.3"
-const descr = `Measure relative position distribution for reads in database 1
-against reads in database 2. For each possible relative position, print the
-number of read pairs with this relative positioning, the total number of
-possible pairs and the total number of reads in each database. Read relative
-position is measured either 5'-5' or 3'-3'. Positive numbers indicate read 1
-is downstream of read 2. Provided SQL
+const descr = `Measure the distribution of the relative position of reads in
+database 1 against reads in database 2. For each relative position in the
+provided span, print the number of read pairs with this relative positioning
+in the two databases, the total number of possible pairs and the total number
+of reads in each database. Read relative position is measured either 5'-5' or
+3'-3'. Positive numbers indicate read 1 is downstream of read 2. Provided SQL
 filters will apply to all counts.`
 const maxConc = 512
 
@@ -61,8 +61,7 @@ type job struct {
 
 type result struct {
 	hist map[int]uint
-	ref  htsdb.Reference
-	ori  feat.Orientation
+	job  job
 }
 
 func worker(id int, jobs <-chan job, results chan<- result) {
@@ -108,7 +107,7 @@ func worker(id int, jobs <-chan job, results chan<- result) {
 				hist[relPos*int(j.ori)] += wig[pos+relPos]
 			}
 		}
-		results <- result{hist: hist}
+		results <- result{hist: hist, job: j}
 	}
 }
 
