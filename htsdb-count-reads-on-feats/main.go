@@ -25,7 +25,7 @@ type Count struct {
 }
 
 const prog = "htsdb-count-reads-on-feats"
-const version = "0.1"
+const version = "0.2"
 const descr = `Print number of reads and read copies that are contained in
 each feature of the input file. Currently only features in the BED6 format are
 supported. Provided SQL filter will apply to all counts.`
@@ -92,7 +92,7 @@ func main() {
 
 	// loop on the BED6 feats and count
 	if *header == true {
-		fmt.Printf("category\tfeat\tcount\tcopyNumber\n")
+		fmt.Printf("category\tfeat\tname\tcount\tcopyNumber\n")
 	}
 	for {
 		if bedS.Next() == false {
@@ -103,11 +103,15 @@ func main() {
 
 		var c Count
 		if *useOri == true {
-			stmt.Get(&c, chrom, start, stop, start, stop, ori)
+			if err = stmt.Get(&c, chrom, start, stop, start, stop, ori); err != nil {
+				panic(err)
+			}
 		} else {
-			stmt.Get(&c, chrom, start, stop, start, stop)
+			if err = stmt.Get(&c, chrom, start, stop, start, stop); err != nil {
+				panic(err)
+			}
 		}
-		fmt.Printf("%s\t%s:%d-%d:%d\t%d\t%d\n", *as, chrom, start, stop, ori, c.Count, c.CopyNum)
+		fmt.Printf("%s\t%s:%d-%d:%d\t%s\t%d\t%d\n", *as, chrom, start, stop, ori, b.Name(), c.Count, c.CopyNum)
 	}
 	if err = bedS.Error(); err != nil {
 		panic(err)
