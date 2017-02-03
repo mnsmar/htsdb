@@ -17,7 +17,7 @@ var CountBuilder = squirrel.Select().
 	Column(squirrel.Alias(squirrel.Expr("CASE WHEN rname IS NULL THEN \"\" ELSE rname END"), "rname")).
 	Column(squirrel.Alias(squirrel.Expr("CASE WHEN strand IS NULL THEN 0 ELSE strand END"), "strand")).
 	Column(squirrel.Alias(squirrel.Expr("COUNT(*)"), "count")).
-	Column(squirrel.Alias(squirrel.Expr("TOTAL(copy_number)"), "copyNum"))
+	Column(squirrel.Alias(squirrel.Expr("CAST(TOTAL(copy_number) AS INTEGER)"), "copyNum"))
 
 // Count is a databases row with record count information.
 type Count struct {
@@ -28,7 +28,7 @@ type Count struct {
 }
 
 const prog = "htsdb-count-reads"
-const version = "0.3"
+const version = "0.4"
 const descr = `Print the number of reads and read copies stored in the
 database. Supports grouping by reference, orientation or both. Provided SQL
 filter will apply to all counts.`
