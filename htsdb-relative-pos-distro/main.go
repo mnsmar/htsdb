@@ -15,7 +15,7 @@ import (
 )
 
 const prog = "htsdb-relative-pos-distro"
-const version = "0.4"
+const version = "0.5"
 const descr = `Measure the distribution of the relative position of reads in
 database 1 against reads in database 2. For each relative position in the
 provided span, print the number of read pairs with this relative positioning
@@ -40,13 +40,19 @@ var (
 		Default("sample").String()
 	where2 = app.Flag("where2", "SQL filter injected in WHERE clause for db2.").
 		PlaceHolder("<SQL>").String()
-	from = app.Flag("pos", "Reference point for relative position measurement.").
+	from1 = app.Flag("pos1", "Reference point for relative position measurement.").
+		Required().PlaceHolder("<5p|3p>").Enum("5p", "3p")
+	from2 = app.Flag("pos2", "Reference point for relative position measurement.").
 		Required().PlaceHolder("<5p|3p>").Enum("5p", "3p")
 	anti = app.Flag("anti", "Compare reads on opposite instead of same orientation.").
 		Bool()
 	span = app.Flag("span", "Maximum distance between compared reads.").
 		Default("100").PlaceHolder("<int>").Int()
 	groupByChrom = app.Flag("by-ref", "Group counts by reference.").
+			Bool()
+	collapse1 = app.Flag("collapse1", "Collapse the reads that have the same pos1.").
+			Bool()
+	collapse2 = app.Flag("collapse2", "Collapse the reads that have the same pos2.").
 			Bool()
 	verbose = app.Flag("verbose", "Verbose mode.").Short('v').Bool()
 )
@@ -57,7 +63,10 @@ type job struct {
 	decs1, decs2 []BuilderDecorator
 	db1, db2     *sqlx.DB
 	span         int
-	getPos       func(feat.Range, feat.Orientation) int
+	getPos1      func(feat.Range, feat.Orientation) int
+	getPos2      func(feat.Range, feat.Orientation) int
+	collapse1    bool
+	collapse2    bool
 }
 
 type result struct {
@@ -107,12 +116,16 @@ func worker(id int, jobs <-chan job, results chan<- result) {
 				if err = rows1.StructScan(&r); err != nil {
 					log.Fatal(err)
 				}
+				pos := j.getPos1(&r, ori1)
+				if _, ok := wig[pos]; ok && j.collapse1 {
+					continue
+				}
 				count1++
-				pos := j.getPos(&r, ori1)
 				wig[pos]++
 			}
 
 			// loop on reads in db2.
+			visited := make(map[int]bool)
 			rows2, err := readsStmt2.Queryx(ori, j.ref.Chrom)
 			if err != nil {
 				log.Fatal(err)
@@ -121,8 +134,12 @@ func worker(id int, jobs <-chan job, results chan<- result) {
 				if err = rows2.StructScan(&r); err != nil {
 					log.Fatal(err)
 				}
+				pos := j.getPos2(&r, ori)
+				if visited[pos] && j.collapse2 {
+					continue
+				}
+				visited[pos] = true
 				count2++
-				pos := j.getPos(&r, ori)
 				for relPos := -j.span; relPos <= j.span; relPos++ {
 					if pos+relPos < 0 {
 						continue
@@ -170,9 +187,13 @@ func main() {
 	}
 
 	// get position extracting function
-	getPos := htsdb.Head
-	if *from == "3p" {
-		getPos = htsdb.Tail
+	getPos1 := htsdb.Head
+	if *from1 == "3p" {
+		getPos1 = htsdb.Tail
+	}
+	getPos2 := htsdb.Head
+	if *from2 == "3p" {
+		getPos2 = htsdb.Tail
 	}
 
 	// deploy workers
@@ -187,14 +208,17 @@ func main() {
 	for _, ref := range refs {
 		jobCnt++
 		jobs <- job{
-			verbose: *verbose,
-			ref:     ref,
-			db1:     db1,
-			db2:     db2,
-			decs1:   decs1,
-			decs2:   decs2,
-			span:    *span,
-			getPos:  getPos,
+			verbose:   *verbose,
+			ref:       ref,
+			db1:       db1,
+			db2:       db2,
+			decs1:     decs1,
+			decs2:     decs2,
+			span:      *span,
+			getPos1:   getPos1,
+			getPos2:   getPos2,
+			collapse1: *collapse1,
+			collapse2: *collapse2,
 		}
 	}
 	close(jobs)
