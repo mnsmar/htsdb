@@ -18,6 +18,14 @@ var CountBuilder = squirrel.Select().
 	Column(squirrel.Alias(squirrel.Expr("SUM(copy_number)"), "copyNum")).
 	GroupBy("len").OrderBy("len")
 
+// AlignLenBuilder is a squirrel select builder that describes a query for the
+// alignment length and whose columns match the fields of Count.
+var AlignLenBuilder = squirrel.Select().
+	Column(squirrel.Alias(squirrel.Expr("stop - start + 1"), "len")).
+	Column(squirrel.Alias(squirrel.Expr("COUNT(*)"), "count")).
+	Column(squirrel.Alias(squirrel.Expr("SUM(copy_number)"), "copyNum")).
+	GroupBy("len").OrderBy("len")
+
 // Count is a databases row with record count information.
 type Count struct {
 	SeqLen  int `db:"len"`
@@ -26,8 +34,8 @@ type Count struct {
 }
 
 const prog = "htsdb-size-distro"
-const version = "0.1"
-const descr = `Print the number of reads and read copies for each read size.
+const version = "0.2"
+const descr = `Print the number of reads and read copies for each read/alignment size.
 Provided SQL filter will apply to all counts.`
 
 var (
@@ -43,6 +51,8 @@ var (
 		Default("all").String()
 	header = app.Flag("header", "Print header line.").
 		Bool()
+	alignLen = app.Flag("align-len", "Use alignment length instead of read length.").
+			Bool()
 )
 
 func main() {
@@ -56,6 +66,9 @@ func main() {
 
 	// assemble sqlx select builders
 	countBuilder := CountBuilder.From(*tab)
+	if *alignLen == true {
+		countBuilder = AlignLenBuilder.From(*tab)
+	}
 	if *where != "" {
 		countBuilder = countBuilder.Where(*where)
 	}
