@@ -16,7 +16,7 @@ import (
 // CountBuilder is a squirrel select builder whose columns match Count fields.
 var CountBuilder = squirrel.Select().
 	Column(squirrel.Alias(squirrel.Expr("COUNT(*)"), "count")).
-	Column(squirrel.Alias(squirrel.Expr("SUM(copy_number)"), "copyNum"))
+	Column(squirrel.Alias(squirrel.Expr("CAST(TOTAL(copy_number) AS INTEGER)"), "copyNum"))
 
 // Count is a databases row with record count information.
 type Count struct {
